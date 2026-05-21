@@ -1,4 +1,4 @@
-// TweetSave v2.0 — with Supabase Auth
+// TweetSave v2.1
 
 const SUPABASE_URL = 'https://mkpctqblkpwwxwbyaref.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_9iFs1ty98zGygTJx9m7Xig_rWqCCDh1';
@@ -20,7 +20,7 @@ function getCatColor(cat) {
   const colors = {
     'AI': '#1d9bf0', 'Learning': '#00ba7c', 'Music & Guitar': '#7856ff',
     'Health': '#00b8d9', 'Politics': '#ff6b6b', 'Personal Interest': '#ff7a00',
-    'Food': '#f9a825', 'Other': '#71767b'
+    'Claude': '#a855f7', 'Food': '#f9a825', 'Other': '#71767b'
   };
   if (colors[cat]) return colors[cat];
   const palette = ['#e040fb','#00bcd4','#ff5722','#8bc34a','#ffc107','#009688','#3f51b5'];
@@ -91,20 +91,15 @@ function updateAuthUI() {
 
 function showAuthModal(mode = 'signin') {
   document.querySelectorAll('.auth-modal-overlay').forEach(el => el.remove());
-
   const overlay = document.createElement('div');
   overlay.className = 'auth-modal-overlay';
   overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
-
   const modal = document.createElement('div');
   modal.style.cssText = 'background:#1e2732;border-radius:16px;padding:24px;width:340px;border:1px solid #2f3336;';
-
   let isSignUp = mode === 'signup';
 
   function renderModal() {
-    if (!modal) return;
     modal.innerHTML = '';
-
     const headerDiv = document.createElement('div');
     headerDiv.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
     const title = document.createElement('h2');
@@ -116,30 +111,24 @@ function showAuthModal(mode = 'signin') {
     closeBtn.addEventListener('click', () => overlay.remove());
     headerDiv.appendChild(title);
     headerDiv.appendChild(closeBtn);
-
     const subtitle = document.createElement('p');
     subtitle.style.cssText = 'font-size:13px;color:#71767b;margin-bottom:20px;line-height:1.5;';
     subtitle.textContent = isSignUp ? 'Create a free account. Cloud sync coming soon for premium users.' : 'Sign in to your TweetSave account.';
-
     const errorEl = document.createElement('div');
     errorEl.style.cssText = 'display:none;font-size:12px;color:#f4212e;margin-bottom:10px;text-align:center;';
     const successEl = document.createElement('div');
     successEl.style.cssText = 'display:none;font-size:12px;color:#00ba7c;margin-bottom:10px;text-align:center;';
-
     const emailInput = document.createElement('input');
     emailInput.type = 'email';
     emailInput.placeholder = 'Email address';
     emailInput.style.cssText = 'width:100%;padding:12px 16px;background:#202327;border:1px solid #2f3336;border-radius:12px;font-size:14px;color:#e7e9ea;outline:none;margin-bottom:12px;';
-
     const passwordInput = document.createElement('input');
     passwordInput.type = 'password';
     passwordInput.placeholder = 'Password (min 6 characters)';
     passwordInput.style.cssText = 'width:100%;padding:12px 16px;background:#202327;border:1px solid #2f3336;border-radius:12px;font-size:14px;color:#e7e9ea;outline:none;margin-bottom:12px;';
-
     const submitBtn = document.createElement('button');
     submitBtn.style.cssText = 'width:100%;padding:12px;background:#1d9bf0;color:white;border:none;border-radius:20px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:12px;';
     submitBtn.textContent = isSignUp ? 'Create account' : 'Sign in';
-
     const toggleDiv = document.createElement('div');
     toggleDiv.style.cssText = 'text-align:center;font-size:13px;color:#71767b;';
     const toggleText = document.createTextNode(isSignUp ? 'Already have an account? ' : 'New to TweetSave? ');
@@ -149,7 +138,6 @@ function showAuthModal(mode = 'signin') {
     toggleSpan.addEventListener('click', () => { isSignUp = !isSignUp; renderModal(); });
     toggleDiv.appendChild(toggleText);
     toggleDiv.appendChild(toggleSpan);
-
     submitBtn.addEventListener('click', async () => {
       const email = emailInput.value.trim();
       const password = passwordInput.value;
@@ -177,11 +165,9 @@ function showAuthModal(mode = 'signin') {
       submitBtn.textContent = isSignUp ? 'Create account' : 'Sign in';
       submitBtn.disabled = false;
     });
-
     [emailInput, passwordInput].forEach(input => {
       input.addEventListener('keypress', (e) => { if (e.key === 'Enter') submitBtn.click(); });
     });
-
     modal.appendChild(headerDiv);
     modal.appendChild(subtitle);
     modal.appendChild(errorEl);
@@ -216,7 +202,11 @@ function setupEventListeners() {
   document.getElementById('exportJSON').addEventListener('click', exportJSON);
   document.getElementById('exportCSV').addEventListener('click', exportCSV);
   document.getElementById('exportHTML').addEventListener('click', exportHTML);
-  document.getElementById('importJSON').addEventListener('click', () => document.getElementById('importFile').click());
+  document.getElementById('importJSON').addEventListener('click', () => {
+    const importFile = document.getElementById('importFile');
+    importFile.value = '';
+    importFile.click();
+  });
   document.getElementById('importFile').addEventListener('change', handleImport);
   document.getElementById('clearAll').addEventListener('click', clearAllBookmarks);
   const authHeaderBtn = document.getElementById('authHeaderBtn');
@@ -227,7 +217,8 @@ function setupEventListeners() {
   if (signOutBtn) signOutBtn.addEventListener('click', async () => {
     chrome.storage.local.get(['supabase_token'], async (result) => {
       if (result.supabase_token) await signOut(result.supabase_token);
-      clearSession(); showToast('Signed out');
+      clearSession();
+      showToast('Signed out');
     });
   });
 }
@@ -311,10 +302,14 @@ function loadData() {
   });
 }
 
-function saveData() { chrome.storage.local.set({ bookmarks, categories }); }
+function saveData() {
+  chrome.storage.local.set({ bookmarks, categories });
+}
 
 function updateUI() {
-  updateStats(); renderFilters(); renderBookmarks();
+  updateStats();
+  renderFilters();
+  renderBookmarks();
   document.getElementById('totalCount').textContent = bookmarks.length + ' saved';
 }
 
@@ -420,8 +415,10 @@ function addCategory() {
   if (!name) return;
   if (categories.includes(name)) { showToast('Already exists!'); return; }
   categories.push(name);
-  saveData(); input.value = '';
-  renderFilters(); showToast('"' + name + '" added!');
+  saveData();
+  input.value = '';
+  renderFilters();
+  showToast('"' + name + '" added!');
 }
 
 function showTab(tabName, btn) {
@@ -533,7 +530,10 @@ function clearAllBookmarks() {
   document.getElementById('confirmClear').addEventListener('click', () => { bookmarks = []; saveData(); updateUI(); overlay.remove(); showToast('All bookmarks cleared!'); });
 }
 
-function exportJSON() { download('xbookmarks_backup_' + getDate() + '.json', JSON.stringify({ bookmarks, categories, exportedAt: new Date().toISOString() }, null, 2), 'application/json'); showToast('JSON exported!'); }
+function exportJSON() {
+  download('xbookmarks_backup_' + getDate() + '.json', JSON.stringify({ bookmarks, categories, exportedAt: new Date().toISOString() }, null, 2), 'application/json');
+  showToast('JSON exported!');
+}
 
 function exportCSV() {
   const rows = [['Author','Text','Category','URL','Date']];
@@ -555,35 +555,46 @@ function handleImport(e) {
   reader.onload = ev => {
     try {
       const data = JSON.parse(ev.target.result);
-      if (!data.bookmarks) { showToast('Invalid file!'); return; }
-      
-      // Build lookup by tweet ID for reliable matching
+      if (!data.bookmarks || !Array.isArray(data.bookmarks)) { showToast('Invalid backup file!'); return; }
+
       const getTweetId = url => { const m = (url||'').match(/\/status\/(\d+)/); return m ? m[1] : null; };
-      const existingById = {};
-      bookmarks.forEach((b, i) => { const id = getTweetId(b.url); if (id) existingById[id] = i; });
-      
+
+      // Build a fresh copy of bookmarks to avoid mutation issues
+      const updatedBookmarks = bookmarks.map(b => ({ ...b }));
+      const idIndexMap = {};
+      updatedBookmarks.forEach((b, i) => { const id = getTweetId(b.url); if (id) idIndexMap[id] = i; });
+
       let updated = 0;
       let added = 0;
-      data.bookmarks.forEach(b => {
-        const tweetId = getTweetId(b.url);
-        if (tweetId && existingById[tweetId] !== undefined) {
-          bookmarks[existingById[tweetId]].category = b.category;
+
+      data.bookmarks.forEach(imported => {
+        const tweetId = getTweetId(imported.url);
+        if (tweetId && idIndexMap[tweetId] !== undefined) {
+          updatedBookmarks[idIndexMap[tweetId]].category = imported.category;
           updated++;
         } else {
-          bookmarks.push(b);
+          updatedBookmarks.push({ ...imported });
           added++;
         }
       });
-      
+
+      // Merge categories
+      const updatedCategories = [...categories];
       if (data.categories) {
-        data.categories.forEach(c => { if (!categories.includes(c)) categories.push(c); });
+        data.categories.forEach(c => { if (!updatedCategories.includes(c)) updatedCategories.push(c); });
       }
-      
-      chrome.storage.local.set({ bookmarks, categories }, () => {
+
+      // Save the fresh copies and reload everything
+      chrome.storage.local.set({ bookmarks: updatedBookmarks, categories: updatedCategories }, () => {
+        bookmarks = updatedBookmarks;
+        categories = updatedCategories;
         updateUI();
-        showToast(`${updated} updated, ${added} added!`);
+        showToast(`✅ ${updated} updated, ${added} added!`);
       });
-    } catch(err) { showToast('Invalid file!'); }
+
+    } catch(err) {
+      showToast('Error reading file!');
+    }
   };
   reader.readAsText(file);
 }
@@ -591,13 +602,15 @@ function handleImport(e) {
 function download(filename, content, type) {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([content], { type }));
-  a.download = filename; a.click();
+  a.download = filename;
+  a.click();
 }
 
 function getDate() { return new Date().toISOString().split('T')[0]; }
 
 function showToast(msg) {
   const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
+  t.textContent = msg;
+  t.classList.add('show');
   setTimeout(() => t.classList.remove('show'), 3000);
 }
