@@ -429,6 +429,19 @@ function showHelpModal() {
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
+// ── CANCEL SCAN ───────────────────────────────────────────────────────────
+
+function cancelScan() {
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (!tabs[0]) return;
+    chrome.tabs.sendMessage(tabs[0].id, { action: 'cancelScan' }, (response) => {
+      isAutoCapturing = false;
+      chrome.storage.local.set({ isScanning: false });
+      showCaptureStatus('Scan stopped', false);
+    });
+  });
+}
+
 // ── AUTO-CAPTURE TOGGLE ───────────────────────────────────────────────────
 
 function toggleAutoCapture(enabled) {
@@ -530,8 +543,14 @@ function showCaptureStatus(message, isProgress) {
     const statsRow = document.querySelector('.stats-row');
     if (statsRow) statsRow.after(statusBar);
   }
-  statusBar.innerHTML = isProgress ? `<span>⟳</span> ${message}` : `✅ ${message}`;
-  if (!isProgress) setTimeout(() => { if (statusBar) statusBar.remove(); }, 4000);
+  if (isProgress) {
+    statusBar.innerHTML = `<span>⟳</span> ${message} <button id="cancelScanBtn" style="margin-left:auto;font-size:11px;padding:3px 10px;border-radius:10px;border:1px solid #1d9bf0;background:transparent;color:#1d9bf0;cursor:pointer;">Stop & Save</button>`;
+    const cancelBtn = document.getElementById('cancelScanBtn');
+    if (cancelBtn) cancelBtn.addEventListener('click', cancelScan);
+  } else {
+    statusBar.innerHTML = `✅ ${message}`;
+    setTimeout(() => { if (statusBar) statusBar.remove(); }, 4000);
+  }
 }
 
 function showSyncStatus(message, isProgress) {

@@ -7,7 +7,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     startAutoCapture(message.existingUrls || [], sendResponse);
     return true; // Keep channel open for async response
   }
-  if (message.action === 'stopCapture') {
+  if (message.action === 'cancelScan') {
     isCapturing = false;
     sendResponse({ stopped: true });
   }
