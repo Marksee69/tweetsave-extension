@@ -14,6 +14,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; w
 .auth-btn-small { font-size: 11px; padding: 4px 12px; border-radius: 12px; border: 1px solid #2f3336; background: transparent; cursor: pointer; color: #71767b; font-weight: 500; }
 .auth-btn-small:hover { border-color: #1d9bf0; color: #1d9bf0; }
 .auth-btn-small.logged-in { color: #00ba7c; border-color: #00ba7c; }
+.help-btn { font-size: 13px; width: 26px; height: 26px; border-radius: 50%; border: 1px solid #2f3336; background: transparent; cursor: pointer; color: #71767b; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.help-btn:hover { border-color: #1d9bf0; color: #1d9bf0; }
 .tabs { display: flex; background: #000; border-bottom: 1px solid #2f3336; }
 .tab { flex: 1; padding: 14px 10px; font-size: 14px; border: none; background: none; cursor: pointer; color: #71767b; font-weight: 500; position: relative; }
 .tab:hover { background: rgba(255,255,255,0.03); }
@@ -91,6 +93,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; w
 .export-btn.danger { color: #f4212e; border-color: #f4212e; }
 .export-btn.danger:hover { background: rgba(244,33,46,0.1); }
 .divider { border: none; border-top: 1px solid #2f3336; margin: 10px 0; }
+.toggle-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid #2f3336; background: #000; }
+.toggle-label { font-size: 13px; color: #71767b; }
+.toggle-switch { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #2f3336; border-radius: 22px; transition: .3s; }
+.toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: .3s; }
+.toggle-switch input:checked + .toggle-slider { background: #1d9bf0; }
+.toggle-switch input:checked + .toggle-slider:before { transform: translateX(18px); }
 .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #1d9bf0; color: white; padding: 10px 20px; border-radius: 20px; font-size: 13px; font-weight: 600; opacity: 0; transition: opacity 0.3s; pointer-events: none; white-space: nowrap; }
 .toast.show { opacity: 1; }
 </style>
@@ -104,6 +114,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; w
   </div>
   <div style="display:flex;align-items:center;gap:8px;">
     <span class="count-badge" id="totalCount">0 saved</span>
+    <button class="help-btn" id="helpBtn" title="How to use TweetSave">?</button>
     <button class="auth-btn-small" id="authHeaderBtn">Sign in</button>
   </div>
 </div>
@@ -128,7 +139,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; w
     <div class="stat"><div class="stat-num" id="statToday">0</div><div class="stat-label">This Week</div></div>
   </div>
   <div class="upgrade-banner" id="upgradeBanner">
-    <span class="upgrade-text">☁️ <strong>Sync across devices</strong> — coming soon for premium</span>
+    <span class="upgrade-text">☁️ <strong>Sync across devices</strong> — upgrade to Pro</span>
     <button class="upgrade-cta" id="upgradeBtn">Sign in free</button>
   </div>
   <div class="search-bar">
@@ -150,8 +161,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; w
     <span class="status-dot"></span>
     <span id="statusText">Checking page...</span>
   </div>
+  <div class="toggle-row">
+    <span class="toggle-label">Auto-capture when visiting x.com/bookmarks</span>
+    <label class="toggle-switch">
+      <input type="checkbox" id="autoCaptureToggle" checked>
+      <span class="toggle-slider"></span>
+    </label>
+  </div>
   <div class="capture-section">
-    <p>Go to <strong style="color:#e7e9ea">x.com/bookmarks</strong> and open TweetSave — it will auto-scan for new bookmarks. Or capture manually below.</p>
+    <p>Go to <strong style="color:#e7e9ea">x.com/bookmarks</strong> and open TweetSave — it will auto-scan and save new bookmarks to <strong style="color:#e7e9ea">Uncategorized</strong>. Or capture manually below.</p>
     <button class="capture-btn" id="captureBtn" disabled>📥 Capture Page Bookmarks</button>
     <button class="capture-btn secondary" id="captureCurrentBtn" disabled>📌 Capture Current Post</button>
   </div>
