@@ -454,6 +454,7 @@ function toggleAutoCapture(enabled) {
 // ── INIT ──────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+  chrome.storage.local.set({ isScanning: false });
   loadData(() => {
     loadSession();
   });
