@@ -496,10 +496,13 @@ chrome.runtime.onMessage.addListener((message) => {
 
 function checkCurrentTabAndAutoCapture() {
   if (!autoCaptureEnabled) return;
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const url = tabs[0] ? tabs[0].url : '';
-    const isBookmarksPage = url.includes('x.com/i/bookmarks') || url.includes('twitter.com/i/bookmarks');
-    if (isBookmarksPage && !isAutoCapturing) startAutoCapture(tabs[0].id);
+  chrome.storage.local.get(['isScanning'], (result) => {
+    if (result.isScanning) return;
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const url = tabs[0] ? tabs[0].url : '';
+      const isBookmarksPage = url.includes('x.com/i/bookmarks') || url.includes('twitter.com/i/bookmarks');
+      if (isBookmarksPage) startAutoCapture(tabs[0].id);
+    });
   });
 }
 
@@ -550,6 +553,7 @@ function updateCaptureProgress(total, newCount) {
 
 function startAutoCapture(tabId) {
   isAutoCapturing = true;
+  chrome.storage.local.set({ isScanning: true });
   const existingUrls = bookmarks.map(b => b.url).filter(Boolean);
   showCaptureStatus('Starting scan...', true);
   chrome.tabs.sendMessage(tabId, { action: 'startAutoCapture', existingUrls }, (response) => {
@@ -568,6 +572,7 @@ function startAutoCapture(tabId) {
 
 function handleAutoCaptureResponse(response) {
   isAutoCapturing = false;
+  chrome.storage.local.set({ isScanning: false });
   if (!response || !response.posts) { showCaptureStatus('Scan complete — no new bookmarks found', false); return; }
   const newPosts = response.posts;
   if (!newPosts.length) { showCaptureStatus(`Scan complete — all ${response.total} bookmarks already saved!`, false); return; }
