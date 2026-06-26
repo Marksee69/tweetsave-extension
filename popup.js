@@ -1,16 +1,18 @@
-// TweetSave v2.1
+// TweetSave v2.3
 
 const SUPABASE_URL = 'https://mkpctqblkpwwxwbyaref.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_9iFs1ty98zGygTJx9m7Xig_rWqCCDh1';
 const STRIPE_PRICE_ID = 'price_1TmJVbRy4ryTcUrSLEEYbTDx';
 const STRIPE_PAYMENT_LINK = 'https://buy.stripe.com/14A9AVboYd1r1cC3NgbZe00';
 
-const DEFAULT_CATEGORIES = ['AI', 'Learning', 'Music & Guitar', 'Health', 'Politics', 'Personal Interest', 'Other'];
+const DEFAULT_CATEGORIES = ['Uncategorized', 'AI', 'Learning', 'Music & Guitar', 'Health', 'Politics', 'Personal Interest', 'Other'];
+const PROTECTED_CATEGORIES = ['Uncategorized'];
 let bookmarks = [];
 let categories = [...DEFAULT_CATEGORIES];
 let activeFilter = 'All';
 let isAutoCapturing = false;
 let currentUser = null;
+let autoCaptureEnabled = true;
 
 const AVATAR_COLORS = ['#1d9bf0','#00ba7c','#ff7a00','#f91880','#7856ff','#ff6b6b','#00b8d9'];
 
@@ -22,7 +24,7 @@ function getCatColor(cat) {
   const colors = {
     'AI': '#1d9bf0', 'Learning': '#00ba7c', 'Music & Guitar': '#7856ff',
     'Health': '#00b8d9', 'Politics': '#ff6b6b', 'Personal Interest': '#ff7a00',
-    'Claude': '#a855f7', 'Food': '#f9a825', 'Other': '#71767b'
+    'Claude': '#a855f7', 'Food': '#f9a825', 'Other': '#71767b', 'Uncategorized': '#536471'
   };
   if (colors[cat]) return colors[cat];
   const palette = ['#e040fb','#00bcd4','#ff5722','#8bc34a','#ffc107','#009688','#3f51b5'];
@@ -92,6 +94,7 @@ function getToken() {
     chrome.storage.local.get(['supabase_token'], result => resolve(result.supabase_token || null));
   });
 }
+
 async function ensureUserProfile(token) {
   if (!currentUser) return;
   try {
@@ -125,7 +128,7 @@ async function getOrCreateCategoryId(name, token) {
 
 async function pushBookmarkToSupabase(bookmark, token) {
   try {
-    const categoryId = await getOrCreateCategoryId(bookmark.category || 'Other', token);
+    const categoryId = await getOrCreateCategoryId(bookmark.category || 'Uncategorized', token);
     const supabaseId = bookmark.supabaseId || generateUUID();
     const payload = {
       id: supabaseId,
@@ -179,13 +182,12 @@ async function syncAllBookmarksToCloud() {
   if (!currentUser) return;
   const token = await getToken();
   if (!token) return;
-// Check premium before syncing
   const premiumCheck = await supabaseRequest(`/rest/v1/users?id=eq.${currentUser.id}&select=premium`, 'GET', null, token);
   const isPremium = Array.isArray(premiumCheck) && premiumCheck.length > 0 && premiumCheck[0].premium === true;
   if (!isPremium) {
     showSyncStatus('☁️ Upgrade to Pro to sync across devices', false);
     return;
-  }  
+  }
   await ensureUserProfile(token);
   const toSync = bookmarks.filter(b => b.dirty || !b.supabaseId);
   if (!toSync.length) return;
@@ -201,7 +203,6 @@ async function syncAllBookmarksToCloud() {
   chrome.storage.local.set({ bookmarks, categories });
   showSyncStatus(`Synced ${count} bookmarks to cloud!`, false);
 }
-
 
 async function pullBookmarksFromCloud() {
   if (!currentUser) return;
@@ -230,7 +231,7 @@ async function pullBookmarksFromCloud() {
         author: cb.author_name || 'Unknown',
         text: cb.content || '',
         url: cb.url || '',
-        category: catIdToName[cb.category_id] || 'Other',
+        category: catIdToName[cb.category_id] || 'Uncategorized',
         savedAt: new Date(cb.saved_at).getTime()
       });
       added++;
@@ -313,7 +314,7 @@ function showAuthModal(mode = 'signin') {
     headerDiv.appendChild(closeBtn);
     const subtitle = document.createElement('p');
     subtitle.style.cssText = 'font-size:13px;color:#71767b;margin-bottom:20px;line-height:1.5;';
-    subtitle.textContent = isSignUp ? 'Create a free account. Cloud sync coming soon for premium users.' : 'Sign in to your TweetSave account.';
+    subtitle.textContent = isSignUp ? 'Create a free account to unlock cloud sync across devices.' : 'Sign in to your TweetSave account.';
     const errorEl = document.createElement('div');
     errorEl.style.cssText = 'display:none;font-size:12px;color:#f4212e;margin-bottom:10px;text-align:center;';
     const successEl = document.createElement('div');
@@ -393,6 +394,52 @@ function showAuthModal(mode = 'signin') {
   document.body.appendChild(overlay);
 }
 
+// ── HELP MODAL ────────────────────────────────────────────────────────────
+
+function showHelpModal() {
+  document.querySelectorAll('.help-modal-overlay').forEach(el => el.remove());
+  const overlay = document.createElement('div');
+  overlay.className = 'help-modal-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:#1e2732;border-radius:16px;padding:24px;width:340px;border:1px solid #2f3336;';
+  modal.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+      <h2 style="font-size:17px;font-weight:700;color:#e7e9ea;">🔖 How to use TweetSave</h2>
+      <button id="helpCloseBtn" style="background:none;border:none;color:#71767b;cursor:pointer;font-size:18px;line-height:1;">✕</button>
+    </div>
+    <div style="font-size:13px;color:#71767b;line-height:1.8;">
+      <p style="margin-bottom:12px;"><strong style="color:#e7e9ea;">1. Capture your bookmarks</strong><br>
+        Go to <span style="color:#1d9bf0;">x.com/bookmarks</span> and open TweetSave — it auto-scans and saves new bookmarks to <em>Uncategorized</em>.</p>
+      <p style="margin-bottom:12px;"><strong style="color:#e7e9ea;">2. Organize</strong><br>
+        New bookmarks land in <em>Uncategorized</em>. Use the category dropdown on each card to sort them.</p>
+      <p style="margin-bottom:12px;"><strong style="color:#e7e9ea;">3. Search</strong><br>
+        Type anything in the search bar to find bookmarks instantly across all categories.</p>
+      <p style="margin-bottom:12px;"><strong style="color:#e7e9ea;">4. Cloud sync (Pro)</strong><br>
+        Sign in and upgrade to Pro ($3.99/mo) to access your bookmarks on any device.</p>
+      <p><strong style="color:#e7e9ea;">5. Export & backup</strong><br>
+        Use the Export tab to save your bookmarks as JSON, CSV, or HTML.</p>
+    </div>
+    <button id="helpGotItBtn" style="width:100%;margin-top:20px;padding:11px;background:#1d9bf0;color:white;border:none;border-radius:20px;font-size:14px;font-weight:700;cursor:pointer;">Got it!</button>
+  `;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  document.getElementById('helpCloseBtn').addEventListener('click', () => overlay.remove());
+  document.getElementById('helpGotItBtn').addEventListener('click', () => overlay.remove());
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ── AUTO-CAPTURE TOGGLE ───────────────────────────────────────────────────
+
+function toggleAutoCapture(enabled) {
+  autoCaptureEnabled = enabled;
+  chrome.storage.local.set({ autoCaptureEnabled });
+  const toggle = document.getElementById('autoCaptureToggle');
+  if (toggle) toggle.checked = enabled;
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', () => {
   loadData(() => {
     loadSession();
@@ -420,9 +467,13 @@ function setupEventListeners() {
   });
   document.getElementById('importFile').addEventListener('change', handleImport);
   document.getElementById('clearAll').addEventListener('click', clearAllBookmarks);
+
   const authHeaderBtn = document.getElementById('authHeaderBtn');
   const upgradeBtn = document.getElementById('upgradeBtn');
   const signOutBtn = document.getElementById('signOutBtn');
+  const helpBtn = document.getElementById('helpBtn');
+  const autoCaptureToggle = document.getElementById('autoCaptureToggle');
+
   if (authHeaderBtn) authHeaderBtn.addEventListener('click', () => { if (!currentUser) showAuthModal('signin'); });
   if (upgradeBtn) upgradeBtn.addEventListener('click', () => showAuthModal('signup'));
   if (signOutBtn) signOutBtn.addEventListener('click', async () => {
@@ -432,6 +483,11 @@ function setupEventListeners() {
       showToast('Signed out');
     });
   });
+  if (helpBtn) helpBtn.addEventListener('click', showHelpModal);
+  if (autoCaptureToggle) {
+    autoCaptureToggle.checked = autoCaptureEnabled;
+    autoCaptureToggle.addEventListener('change', (e) => toggleAutoCapture(e.target.checked));
+  }
 }
 
 chrome.runtime.onMessage.addListener((message) => {
@@ -439,6 +495,7 @@ chrome.runtime.onMessage.addListener((message) => {
 });
 
 function checkCurrentTabAndAutoCapture() {
+  if (!autoCaptureEnabled) return;
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const url = tabs[0] ? tabs[0].url : '';
     const isBookmarksPage = url.includes('x.com/i/bookmarks') || url.includes('twitter.com/i/bookmarks');
@@ -473,6 +530,7 @@ function showCaptureStatus(message, isProgress) {
   statusBar.innerHTML = isProgress ? `<span>⟳</span> ${message}` : `✅ ${message}`;
   if (!isProgress) setTimeout(() => { if (statusBar) statusBar.remove(); }, 4000);
 }
+
 function showSyncStatus(message, isProgress) {
   let statusBar = document.getElementById('syncStatus');
   if (!statusBar) {
@@ -513,14 +571,18 @@ function handleAutoCaptureResponse(response) {
   if (!response || !response.posts) { showCaptureStatus('Scan complete — no new bookmarks found', false); return; }
   const newPosts = response.posts;
   if (!newPosts.length) { showCaptureStatus(`Scan complete — all ${response.total} bookmarks already saved!`, false); return; }
-  showCaptureStatus(`Found ${newPosts.length} new bookmarks — choose category`, false);
-  showCategoryDialog(newPosts);
+  // Auto-save to Uncategorized — no dialog needed
+  saveCaptured(newPosts, 'Uncategorized');
+  showCaptureStatus(`Saved ${newPosts.length} new bookmarks to Uncategorized`, false);
 }
 
 function loadData(callback) {
-  chrome.storage.local.get(['bookmarks', 'categories'], (result) => {
+  chrome.storage.local.get(['bookmarks', 'categories', 'autoCaptureEnabled'], (result) => {
     bookmarks = result.bookmarks || [];
     categories = result.categories || [...DEFAULT_CATEGORIES];
+    autoCaptureEnabled = result.autoCaptureEnabled !== false; // default true
+    // Ensure Uncategorized always exists
+    if (!categories.includes('Uncategorized')) categories.unshift('Uncategorized');
     updateUI();
     if (callback) callback();
   });
@@ -536,6 +598,9 @@ function updateUI() {
   renderFilters();
   renderBookmarks();
   document.getElementById('totalCount').textContent = bookmarks.length + ' saved';
+  // Sync toggle state
+  const toggle = document.getElementById('autoCaptureToggle');
+  if (toggle) toggle.checked = autoCaptureEnabled;
 }
 
 function updateStats() {
@@ -568,6 +633,17 @@ function renderBookmarks() {
     return matchFilter && matchSearch;
   }).sort((a, b) => b.savedAt - a.savedAt);
   list.innerHTML = '';
+  // Show AI teaser banner when viewing Uncategorized
+  let aiBanner = document.getElementById('aiBanner');
+  if (aiBanner) aiBanner.remove();
+  if (activeFilter === 'Uncategorized') {
+    aiBanner = document.createElement('div');
+    aiBanner.id = 'aiBanner';
+    aiBanner.style.cssText = 'padding:10px 16px;background:#7856ff15;border-bottom:1px solid #7856ff30;font-size:12px;color:#7856ff;display:flex;align-items:center;gap:8px;';
+    aiBanner.innerHTML = '🤖 <span><strong>AI auto-categorization coming soon</strong> — it will sort these for you automatically.</span>';
+    list.before(aiBanner);
+  }
+
   if (!filtered.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
@@ -643,6 +719,7 @@ function addCategory() {
   const input = document.getElementById('newCatInput');
   const name = input.value.trim();
   if (!name) return;
+  if (PROTECTED_CATEGORIES.includes(name)) { showToast('That category is protected!'); return; }
   if (categories.includes(name)) { showToast('Already exists!'); return; }
   categories.push(name);
   saveData();
@@ -739,12 +816,12 @@ function saveCaptured(posts, category) {
   let added = 0;
   posts.forEach(post => {
     if (!bookmarks.some(b => b.url === post.url || (b.text === post.text && post.text))) {
-      bookmarks.push({ id: Date.now().toString(36) + Math.random().toString(36).substr(2,9), author: post.author, text: post.text, url: post.url, category, savedAt: Date.now() });
+      bookmarks.push({ id: Date.now().toString(36) + Math.random().toString(36).substr(2,9), author: post.author, text: post.text, url: post.url, category, savedAt: Date.now(), dirty: true });
       added++;
     }
   });
   saveData(); updateUI();
-  showToast(added + ' saved as ' + category + '!');
+  if (added > 0) showToast(added + ' saved to ' + category + '!');
   showTab('bookmarks', document.getElementById('tabBookmarks'));
 }
 
@@ -789,7 +866,6 @@ function handleImport(e) {
 
       const getTweetId = url => { const m = (url||'').match(/\/status\/(\d+)/); return m ? m[1] : null; };
 
-      // Build a fresh copy of bookmarks to avoid mutation issues
       const updatedBookmarks = bookmarks.map(b => ({ ...b }));
       const idIndexMap = {};
       updatedBookmarks.forEach((b, i) => { const id = getTweetId(b.url); if (id) idIndexMap[id] = i; });
@@ -801,20 +877,19 @@ function handleImport(e) {
         const tweetId = getTweetId(imported.url);
         if (tweetId && idIndexMap[tweetId] !== undefined) {
           updatedBookmarks[idIndexMap[tweetId]].category = imported.category;
+          updatedBookmarks[idIndexMap[tweetId]].dirty = true;
           updated++;
         } else {
-          updatedBookmarks.push({ ...imported });
+          updatedBookmarks.push({ ...imported, dirty: true });
           added++;
         }
       });
 
-      // Merge categories
       const updatedCategories = [...categories];
       if (data.categories) {
         data.categories.forEach(c => { if (!updatedCategories.includes(c)) updatedCategories.push(c); });
       }
 
-      // Save the fresh copies and reload everything
       chrome.storage.local.set({ bookmarks: updatedBookmarks, categories: updatedCategories }, () => {
         bookmarks = updatedBookmarks;
         categories = updatedCategories;
