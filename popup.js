@@ -2,6 +2,8 @@
 
 const SUPABASE_URL = 'https://mkpctqblkpwwxwbyaref.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_9iFs1ty98zGygTJx9m7Xig_rWqCCDh1';
+const STRIPE_PRICE_ID = 'price_1TmJVbRy4ryTcUrSLEEYbTDx';
+const STRIPE_PAYMENT_LINK = 'https://buy.stripe.com/14A9AVboYd1r1cC3NgbZe00';
 
 const DEFAULT_CATEGORIES = ['AI', 'Learning', 'Music & Guitar', 'Health', 'Politics', 'Personal Interest', 'Other'];
 let bookmarks = [];
@@ -35,7 +37,13 @@ async function supabaseRequest(endpoint, method = 'GET', body = null, token = nu
   const options = { method, headers };
   if (body) options.body = JSON.stringify(body);
   const resp = await fetch(`${SUPABASE_URL}${endpoint}`, options);
-  return resp.json();
+  const text = await resp.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    return null;
+  }
 }
 
 async function signUp(email, password) {
@@ -57,18 +65,187 @@ async function signOut(token) {
 function saveSession(session) {
   chrome.storage.local.set({ supabase_token: session.access_token, supabase_user: session.user });
   currentUser = session.user;
+  categoryIdCache = {};
   updateAuthUI();
 }
 
 function clearSession() {
   chrome.storage.local.remove(['supabase_token', 'supabase_user']);
   currentUser = null;
+  categoryIdCache = {};
   updateAuthUI();
+}
+// ── CLOUD SYNC ────────────────────────────────────────────────────────────
+
+let categoryIdCache = {};
+
+function generateUUID() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+}
+
+function getToken() {
+  return new Promise(resolve => {
+    chrome.storage.local.get(['supabase_token'], result => resolve(result.supabase_token || null));
+  });
+}
+async function ensureUserProfile(token) {
+  if (!currentUser) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${token}`,
+        'Prefer': 'resolution=ignore-duplicates'
+      },
+      body: JSON.stringify({ id: currentUser.id, email: currentUser.email })
+    });
+  } catch (e) {
+    console.error('Failed to create user profile', e);
+  }
+}
+
+async function getOrCreateCategoryId(name, token) {
+  if (categoryIdCache[name]) return categoryIdCache[name];
+  const existing = await supabaseRequest(`/rest/v1/categories?name=eq.${encodeURIComponent(name)}&select=id`, 'GET', null, token);
+  if (Array.isArray(existing) && existing.length > 0) {
+    categoryIdCache[name] = existing[0].id;
+    return existing[0].id;
+  }
+  const newId = generateUUID();
+  await supabaseRequest('/rest/v1/categories', 'POST', { id: newId, user_id: currentUser.id, name: name }, token);
+  categoryIdCache[name] = newId;
+  return newId;
+}
+
+async function pushBookmarkToSupabase(bookmark, token) {
+  try {
+    const categoryId = await getOrCreateCategoryId(bookmark.category || 'Other', token);
+    const supabaseId = bookmark.supabaseId || generateUUID();
+    const payload = {
+      id: supabaseId,
+      user_id: currentUser.id,
+      category_id: categoryId,
+      author_name: bookmark.author || 'Unknown',
+      author_handle: '',
+      content: bookmark.text || '',
+      url: bookmark.url || '',
+      saved_at: new Date(bookmark.savedAt).toISOString()
+    };
+    const resp = await fetch(`${SUPABASE_URL}/rest/v1/bookmarks`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${token}`,
+        'Prefer': 'resolution=merge-duplicates,return=representation'
+      },
+      body: JSON.stringify(payload)
+    });
+    const respText = await resp.text();
+    if (!resp.ok) {
+      console.error(`Push failed for ${bookmark.id}: ${resp.status} ${respText}`);
+      return;
+    }
+    if (!respText || respText === '[]') {
+      console.warn(`Push for ${bookmark.id} returned OK but inserted nothing — RLS may be silently blocking`);
+      return;
+    }
+    bookmark.supabaseId = supabaseId;
+    bookmark.dirty = false;
+  } catch (e) {
+    console.error('Sync push failed for bookmark', bookmark.id, e);
+  }
+}
+
+async function deleteBookmarkFromCloud(supabaseId, token) {
+  if (!supabaseId || !token) return;
+  try {
+    await fetch(`${SUPABASE_URL}/rest/v1/bookmarks?id=eq.${supabaseId}`, {
+      method: 'DELETE',
+      headers: { 'apikey': SUPABASE_KEY, 'Authorization': `Bearer ${token}` }
+    });
+  } catch (e) {
+    console.error('Cloud delete failed', e);
+  }
+}
+
+async function syncAllBookmarksToCloud() {
+  if (!currentUser) return;
+  const token = await getToken();
+  if (!token) return;
+// Check premium before syncing
+  const premiumCheck = await supabaseRequest(`/rest/v1/users?id=eq.${currentUser.id}&select=premium`, 'GET', null, token);
+  const isPremium = Array.isArray(premiumCheck) && premiumCheck.length > 0 && premiumCheck[0].premium === true;
+  if (!isPremium) {
+    showSyncStatus('☁️ Upgrade to Pro to sync across devices', false);
+    return;
+  }  
+  await ensureUserProfile(token);
+  const toSync = bookmarks.filter(b => b.dirty || !b.supabaseId);
+  if (!toSync.length) return;
+  let count = 0;
+  showSyncStatus(`Syncing 0/${toSync.length} bookmarks...`, true);
+  for (const b of toSync) {
+    await pushBookmarkToSupabase(b, token);
+    count++;
+    if (count % 5 === 0 || count === toSync.length) {
+      showSyncStatus(`Syncing ${count}/${toSync.length} bookmarks...`, true);
+    }
+  }
+  chrome.storage.local.set({ bookmarks, categories });
+  showSyncStatus(`Synced ${count} bookmarks to cloud!`, false);
+}
+
+
+async function pullBookmarksFromCloud() {
+  if (!currentUser) return;
+  const token = await getToken();
+  if (!token) return;
+  try {
+    const cloudCategories = await supabaseRequest('/rest/v1/categories?select=id,name', 'GET', null, token);
+    const catIdToName = {};
+    if (Array.isArray(cloudCategories)) {
+      cloudCategories.forEach(c => {
+        catIdToName[c.id] = c.name;
+        categoryIdCache[c.name] = c.id;
+        if (!categories.includes(c.name)) categories.push(c.name);
+      });
+    }
+    const cloudBookmarks = await supabaseRequest('/rest/v1/bookmarks?select=*', 'GET', null, token);
+    if (!Array.isArray(cloudBookmarks)) return;
+    const localBySupabaseId = {};
+    bookmarks.forEach(b => { if (b.supabaseId) localBySupabaseId[b.supabaseId] = b; });
+    let added = 0;
+    cloudBookmarks.forEach(cb => {
+      if (localBySupabaseId[cb.id]) return;
+      bookmarks.push({
+        id: Date.now().toString(36) + Math.random().toString(36).substr(2, 9),
+        supabaseId: cb.id,
+        author: cb.author_name || 'Unknown',
+        text: cb.content || '',
+        url: cb.url || '',
+        category: catIdToName[cb.category_id] || 'Other',
+        savedAt: new Date(cb.saved_at).getTime()
+      });
+      added++;
+    });
+    chrome.storage.local.set({ bookmarks, categories });
+    updateUI();
+    if (added > 0) showToast(`☁️ Synced ${added} bookmark(s) from another device`);
+  } catch (e) {
+    console.error('Sync pull failed', e);
+  }
 }
 
 function loadSession() {
   chrome.storage.local.get(['supabase_token', 'supabase_user'], (result) => {
-    if (result.supabase_user) { currentUser = result.supabase_user; updateAuthUI(); }
+    if (result.supabase_user) { currentUser = result.supabase_user; updateAuthUI(); pullBookmarksFromCloud().then(syncAllBookmarksToCloud); }
   });
 }
 
@@ -77,15 +254,38 @@ function updateAuthUI() {
   const userBar = document.getElementById('userBar');
   const userEmail = document.getElementById('userEmail');
   const upgradeBanner = document.getElementById('upgradeBanner');
+  const upgradeBtn = document.getElementById('upgradeBtn');
   if (currentUser) {
     if (authBtn) { authBtn.textContent = '✓ Signed in'; authBtn.className = 'auth-btn-small logged-in'; }
     if (userBar) userBar.style.display = 'flex';
     if (userEmail) userEmail.textContent = '📧 ' + currentUser.email;
-    if (upgradeBanner) upgradeBanner.style.display = 'none';
+    checkPremiumStatus();
   } else {
     if (authBtn) { authBtn.textContent = 'Sign in'; authBtn.className = 'auth-btn-small'; }
     if (userBar) userBar.style.display = 'none';
-    if (upgradeBanner) upgradeBanner.style.display = 'flex';
+    if (upgradeBanner) {
+      upgradeBanner.style.display = 'flex';
+      upgradeBanner.querySelector('.upgrade-text').innerHTML = '☁️ <strong>Sync across devices</strong> — upgrade to Pro';
+      if (upgradeBtn) { upgradeBtn.textContent = 'Sign in free'; upgradeBtn.onclick = () => showAuthModal('signup'); }
+    }
+  }
+}
+
+async function checkPremiumStatus() {
+  const upgradeBanner = document.getElementById('upgradeBanner');
+  const upgradeBtn = document.getElementById('upgradeBtn');
+  if (!currentUser) return;
+  const token = await getToken();
+  const result = await supabaseRequest(`/rest/v1/users?id=eq.${currentUser.id}&select=premium`, 'GET', null, token);
+  const isPremium = Array.isArray(result) && result.length > 0 && result[0].premium === true;
+  if (isPremium) {
+    if (upgradeBanner) upgradeBanner.style.display = 'none';
+  } else {
+    if (upgradeBanner) {
+      upgradeBanner.style.display = 'flex';
+      upgradeBanner.querySelector('.upgrade-text').innerHTML = '☁️ <strong>Upgrade to Pro</strong> — sync across devices';
+      if (upgradeBtn) { upgradeBtn.textContent = 'Upgrade $3.99/mo'; upgradeBtn.onclick = () => chrome.tabs.create({ url: STRIPE_PAYMENT_LINK }); }
+    }
   }
 }
 
@@ -148,15 +348,25 @@ function showAuthModal(mode = 'signin') {
       submitBtn.disabled = true;
       try {
         if (isSignUp) {
-          await signUp(email, password);
-          successEl.textContent = '✅ Account created! Check your email to confirm, then sign in.';
-          successEl.style.display = 'block';
-          setTimeout(() => { isSignUp = false; renderModal(); }, 2500);
+          const session = await signUp(email, password);
+          if (session.access_token) {
+            saveSession(session);
+            overlay.remove();
+            showToast('✅ Account created and signed in!');
+            await pullBookmarksFromCloud();
+            syncAllBookmarksToCloud();
+          } else {
+            successEl.textContent = '✅ Account created! Please sign in.';
+            successEl.style.display = 'block';
+            setTimeout(() => { isSignUp = false; renderModal(); }, 2000);
+          }
         } else {
           const session = await signIn(email, password);
           saveSession(session);
           overlay.remove();
           showToast('✅ Signed in successfully!');
+          await pullBookmarksFromCloud();
+          syncAllBookmarksToCloud();
         }
       } catch(err) {
         errorEl.textContent = err.message || 'Something went wrong. Please try again.';
@@ -184,8 +394,9 @@ function showAuthModal(mode = 'signin') {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-  loadData();
-  loadSession();
+  loadData(() => {
+    loadSession();
+  });
   setupEventListeners();
   checkCurrentTabAndAutoCapture();
 });
@@ -262,6 +473,18 @@ function showCaptureStatus(message, isProgress) {
   statusBar.innerHTML = isProgress ? `<span>⟳</span> ${message}` : `✅ ${message}`;
   if (!isProgress) setTimeout(() => { if (statusBar) statusBar.remove(); }, 4000);
 }
+function showSyncStatus(message, isProgress) {
+  let statusBar = document.getElementById('syncStatus');
+  if (!statusBar) {
+    statusBar = document.createElement('div');
+    statusBar.id = 'syncStatus';
+    statusBar.style.cssText = 'padding:10px 16px;background:#00ba7c20;border-bottom:1px solid #2f3336;font-size:13px;color:#00ba7c;display:flex;align-items:center;gap:8px;';
+    const statsRow = document.querySelector('.stats-row');
+    if (statsRow) statsRow.after(statusBar);
+  }
+  statusBar.innerHTML = isProgress ? `<span>☁️</span> ${message}` : `✅ ${message}`;
+  if (!isProgress) setTimeout(() => { if (statusBar) statusBar.remove(); }, 4000);
+}
 
 function updateCaptureProgress(total, newCount) {
   showCaptureStatus(`Scanning... ${total} found, ${newCount} new`, true);
@@ -294,16 +517,18 @@ function handleAutoCaptureResponse(response) {
   showCategoryDialog(newPosts);
 }
 
-function loadData() {
+function loadData(callback) {
   chrome.storage.local.get(['bookmarks', 'categories'], (result) => {
     bookmarks = result.bookmarks || [];
     categories = result.categories || [...DEFAULT_CATEGORIES];
     updateUI();
+    if (callback) callback();
   });
 }
 
 function saveData() {
   chrome.storage.local.set({ bookmarks, categories });
+  if (currentUser) syncAllBookmarksToCloud();
 }
 
 function updateUI() {
@@ -381,7 +606,7 @@ function renderBookmarks() {
       opt.value = c; opt.textContent = c; opt.selected = b.category === c;
       select.appendChild(opt);
     });
-    select.addEventListener('change', (e) => { e.stopPropagation(); b.category = select.value; saveData(); renderFilters(); renderBookmarks(); showToast('Moved to ' + select.value); });
+    select.addEventListener('change', (e) => { e.stopPropagation(); b.category = select.value; b.dirty = true; saveData(); renderFilters(); renderBookmarks(); showToast('Moved to ' + select.value); });
     leftActions.appendChild(select);
     const rightActions = document.createElement('div');
     rightActions.className = 'card-right';
@@ -395,7 +620,12 @@ function renderBookmarks() {
     const delBtn = document.createElement('button');
     delBtn.className = 'action-btn danger';
     delBtn.innerHTML = '🗑️ Del';
-    delBtn.addEventListener('click', (e) => { e.stopPropagation(); bookmarks = bookmarks.filter(x => x.id !== b.id); saveData(); updateUI(); showToast('Deleted'); });
+    delBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (currentUser && b.supabaseId) { const token = await getToken(); deleteBookmarkFromCloud(b.supabaseId, token); }
+      bookmarks = bookmarks.filter(x => x.id !== b.id);
+      saveData(); updateUI(); showToast('Deleted');
+    });
     rightActions.appendChild(delBtn);
     actions.appendChild(leftActions);
     actions.appendChild(rightActions);
